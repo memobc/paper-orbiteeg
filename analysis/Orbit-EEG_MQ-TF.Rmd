@@ -20,7 +20,7 @@ require(x)
 lapply(x, require, character.only = TRUE)
 
 ### define computer paths
-myComp <- '/Users/natalia/Desktop/orbit-EEG/'
+myComp <- '../paper-orbiteeg/'
 figureDir <- paste(myComp, 'figures', sep = "") 
 
 ### define all functions
