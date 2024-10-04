@@ -1,0 +1,468 @@
+---
+title: "Orbit-EEG Behavioral Data"
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+This script contains all analyses of Orbit-EEG **behavioral** data.
+
+N = 23/33 participants (*n* = 3 performed at chance-level on behavioral task; *n* = 1 highly noisy channels; *n* = 6 poor EEG data quality)
+
+Mixture model functions are from: https://github.com/eddjberry/precision-mixture-model  
+
+
+```{r, include = FALSE}
+
+### load in all necessary packages
+x <- c("ggplot2", "shiny", "ggpubr", "dplyr", "knitr", "tidyr", "tidyverse", "magrittr", "grid", "gridExtra", "pander", "ez", "car", "smoothmath", "ggsignif", "formattable", "psych", "reshape2", "afex", "lsr")
+require(x)
+lapply(x, require, character.only = TRUE)
+
+### define computer paths
+myComp <- '/Users/natalia/Desktop/orbit-EEG/'
+figureDir <- paste(myComp, 'figures', sep = "") 
+
+### define all functions
+se <- function(x) sqrt(var(x)/length(x))  
+ci <- function(x) (sqrt(var(x)/length(x)))*1.96  #function to calculate 95% confidence interval
+zscore <- function(x,data) (x - mean(data))/sd(data)  #allows values to be z scored relative to itself (x = data) or a different variable (x != data)
+
+source(paste(myComp, 'myFunctions/mixture_model_functions.R',sep = "")) 
+
+### load in all behavioral data
+myFile <- paste(myComp,'data/AllData_EEG-behavior.csv', sep = "")
+allData <- read.csv(myFile)
+
+subjects <- unique(allData$SubID)
+NSubjs <- length(subjects)
+
+```
+
+# Feature Errors
+Response - Study angle across all subjects plotted as density histograms per feature.  
+
+```{r}
+### Overall memory quality
+#### fit mixture model to aggregate data (needs to be in radians):
+AllFeature <- JV10_fit(wrap(c(allData$ColResp,allData$SceneResp)/180*pi), wrap(c(allData$ColStudy,allData$SceStudy)/180*pi))
+print(paste0("All Features : % Correct = ", round(AllFeature$B$Pt, digits = 4)))
+
+### Color feature
+Color <- JV10_fit(wrap(allData$ColResp/180*pi), wrap(allData$ColStudy/180*pi))
+print(paste0("Color : % Correct = ", round(Color$B$Pt, digits = 4)))
+print(paste0("Color : Precision = ", round(Color$B$K, digits = 4)))
+
+### Scene feature
+Scene <- JV10_fit(wrap(allData$SceneResp/180*pi), wrap(allData$SceStudy/180*pi))
+print(paste0("Scene : % Correct = ", round(Scene$B$Pt, digits = 4)))
+print(paste0("Scene : Precision = ", round(Scene$B$K, digits = 4)))
+
+### Calculate emotional sound % correct (can't fit into distribution because of response type)
+emotionMean <- allData %>%
+    summarize(emoMean = (length(EmotionCorrect[EmotionCorrect==1])/length(TestTrial)))
+print(paste("Emotion: % Correct = ", round(emotionMean, digits = 4)))
+
+### Now, get best fitting PDFs:
+range = seq(from = -pi, to = pi, by = pi/180)
+
+#### 1) Get von Mises based on aggregate precision
+yAll = vonmisespdf(range,0,AllFeature$B$K)
+yCol = vonmisespdf(range,0,Color$B$K)
+ySce = vonmisespdf(range,0,Scene$B$K)
+
+#### 2) Scale so area of distribution = proportion correct
+yAll = yAll * (AllFeature$B$Pt/(sum(yAll)))
+yCol = yCol * (Color$B$Pt/(sum(yCol)))
+ySce = ySce * (Scene$B$Pt/(sum(ySce)))
+
+#### 3) Add guess rate (uniform component)
+yAll = data.frame(yAll + (AllFeature$B$Pu/length(range)))
+yCol = data.frame(yCol + (Color$B$Pu/length(range)))
+ySce = data.frame(ySce + (Scene$B$Pu/length(range)))
+
+
+colnames(yAll)<- c("prob")
+yAll$error <- seq(from = -180, to = 180, by = 1)
+colnames(yCol)<- c("prob")
+yCol$error <- seq(from = -180, to = 180, by = 1)
+colnames(ySce)<- c("prob")
+ySce$error <- seq(from = -180, to = 180, by = 1)
+
+
+### Threshold for memory success (a 50% chance that error fits von Mises), rounded to nearest multiple of 3 (my unique angles):
+allT <-  max(abs(yAll$error[yAll$prob > (AllFeature$B$Pu/length(range))*2]))
+allT <- 3*round(allT/3) 
+colT <-  max(abs(yCol$error[yCol$prob > (Color$B$Pu/length(range)*2)]))
+colT <- 3*round(colT/3) 
+sceT <-  max(abs(ySce$error[ySce$prob > (Scene$B$Pu/length(range))*2]))
+sceT <- 3*round(sceT/3) 
+emoT <- as.numeric(1)
+
+
+### Report thresholds
+print(paste("Threshold for all feature memory success at 50% <= ", allT, " degrees", sep = ""))
+print(paste("Threshold for color memory success at 50% <= ", colT, " degrees", sep = ""))
+print(paste("Threshold for scene memory success at 50% <= ", sceT, " degrees", sep = ""))
+
+```
+
+# Subject Mixture Model + Emotional Sounds summarized 
+## What proportion of subject responses are within the threshold for memory success?
+
+```{r}
+
+# Summarize each feature by subject
+color.responses <- allData %>%
+  group_by(SubID) %>%
+      mutate(Trialcount = length(which(ColAbsError <= colT))) %>%
+      mutate(TrialNumber = max(TestTrial)) %>%
+          mutate(PercentCorrect = Trialcount/TrialNumber) %>% 
+  group_by(SubID) %>%
+    summarize(ColorTrialCount = mean(Trialcount),
+              TrialNumber = mean(TrialNumber),
+              ColorPercentCorrect = mean(PercentCorrect))
+
+scene.responses <- allData %>%
+    group_by(SubID) %>%
+      mutate(Trialcount = length(which(SceAbsError <= sceT))) %>%
+        mutate(TrialNumber = max(TestTrial)) %>%
+          mutate(PercentCorrect = Trialcount/TrialNumber) %>% 
+    group_by(SubID) %>%
+      summarize(SceneTrialCount = mean(Trialcount),
+                TrialNumber = mean(TrialNumber),
+                ScenePercentCorrect = mean(PercentCorrect))
+
+emotion.responses <- allData %>%
+    group_by(SubID) %>%
+      mutate(Trialcount = length(which(EmotionCorrect == emoT))) %>%
+      mutate(TrialNumber = max(TestTrial)) %>%
+      mutate(PercentCorrect = Trialcount/TrialNumber) %>% 
+    group_by(SubID) %>%
+      summarize(EmotionTrialCount = mean(Trialcount),
+                TrialNumber = mean(TrialNumber),
+                EmotionPercentCorrect = mean(PercentCorrect))
+
+sub.responses <- merge(color.responses,scene.responses) %>% merge(emotion.responses)
+
+summary.response <- sub.responses %>% 
+  summarize(colorMean = mean(ColorPercentCorrect),
+            colorSE = se(ColorPercentCorrect), 
+            sceneMean = mean(sub.responses$ScenePercentCorrect),
+            sceneSE = se(sub.responses$ScenePercentCorrect),
+            emotionMean = mean(sub.responses$EmotionPercentCorrect),
+            emotionSE = se(sub.responses$EmotionPercentCorrect))
+
+print(paste("Color: % Subject Responses Correct = ", round(summary.response$colorMean, digits = 4)))
+print(paste("Color: Standard Error = ", round(summary.response$colorSE, digits = 4)))
+
+print(paste("Scene: % Subject Responses Correct = ", round(summary.response$sceneMean, digits = 4)))
+print(paste("Scene: Standard Error = ", round(summary.response$sceneSE, digits = 4)))
+
+print(paste("Emotion: % Subject Responses Correct = ", round(summary.response$emotionMean, digits = 4)))
+print(paste("Emotion: Standard Error = ", round(summary.response$emotionSE, digits = 4)))
+
+```
+
+# Binary memory dependency (i.e., retrieval success)
+
+```{r}
+
+# computing the trial-to-trial dependency of a binary memory success score for each feature pairing
+dependency <- data.frame(matrix(0, nrow = NSubjs*3, ncol = 3))
+names(dependency) <- c("SubID","Pair","Difference")
+
+row <- 0
+for (idx in 1:length(subjects)) {
+    myData <- subset(allData, SubID == as.integer(subjects[idx]))
+   
+    for (pair in 1:3) {
+      if (pair == 1) {
+        name = 'Emotion-Color'
+        curAcc <- cbind(myData$EmotionCorrect,myData$ColorCorrect)
+      } else if (pair == 2) {
+        name = 'Emotion-Scene'
+        curAcc <- cbind(myData$EmotionCorrect,myData$SceneCorrect)
+      } else if (pair == 3) {
+        name = 'Color-Scene'
+        curAcc <- cbind(myData$ColorCorrect,myData$SceneCorrect)
+      }
+      
+      row = row + 1
+      dependency$SubID[row]   = myData$SubID[1]
+      dependency$Pair[row]    = name
+      data  = sum(!rowSums(curAcc) == 1)/nrow(curAcc) #actual dependency of the data (proportion of times both remembered or forgotten)
+      sumAcc <- colMeans(curAcc)
+      independent = (sumAcc[1]*sumAcc[2])+((1-sumAcc[1])*(1-sumAcc[2])) #dependency of data expected based on performance (assuming actually independent)
+      dependency$Difference[row] = data - independent #degree to which features are more/less dependent in memory than expected by chance (based on performance)
+     }
+  } #end of loop through subjects    
+
+dependency$Pair <- as.factor(dependency$Pair)
+
+# summarize for later plotting
+success <- dependency %>% 
+              group_by(SubID, Pair)
+
+# t-tests, greater than 0
+pander(t.test(success$Difference[success$Pair == 'Color-Scene'], mu=0))
+pander(t.test(success$Difference[success$Pair == 'Emotion-Color'], mu=0))
+pander(t.test(success$Difference[success$Pair == 'Emotion-Scene'], mu=0))
+
+```
+
+# Precision dependency
+
+```{r}
+
+# computing the correlations between color and scene success (1 0) and precision (reversed 'correct' error).  
+dependency <- data.frame(matrix(0, nrow = NSubjs*3, ncol = 3))
+names(dependency) <- c("SubID","Pair","Dependency")
+
+row <- 0
+for (idx in 1:length(subjects)) {
+
+  for (pair in 1:3) {
+    row = row + 1
+    if (pair == 1) {
+       myData <- subset(allData, SubID == subjects[idx] & ColorCorrect == 1 & SceneCorrect == 1)
+       name = 'ColorP-SceneP'
+       dependency$Dependency[row]  = fisherz(cor(180 - myData$ColAbsError,180 - myData$SceAbsError))
+    } else if (pair == 2) {
+       myData <- subset(allData, SubID == subjects[idx] & SceneCorrect == 1)
+       name = 'ColorS-SceneP'
+       dependency$Dependency[row]  = fisherz(cor(myData$ColorCorrect,180 - myData$SceAbsError))
+    } else if (pair == 3) {
+       myData <- subset(allData, SubID == subjects[idx] & ColorCorrect == 1)
+       name = 'SceneS-ColorP'
+       dependency$Dependency[row]  = fisherz(cor(myData$SceneCorrect,180 - myData$ColAbsError))
+    }
+    dependency$SubID[row] = myData$SubID[1]
+    dependency$Pair[row]  = name
+   }
+  }#end of loop through subjects    
+
+dependency$Pair <- as.factor(dependency$Pair)
+
+# correlations by pair, summarize for later plotting
+precision <- dependency %>% 
+              group_by(SubID, Pair)
+
+#t-tests, greater than 0
+pander(t.test(precision$Dependency[precision$Pair == 'ColorP-SceneP'], mu=0))
+pander(t.test(precision$Dependency[precision$Pair == 'ColorS-SceneP'], mu=0))
+pander(t.test(precision$Dependency[precision$Pair == 'SceneS-ColorP'], mu=0))
+
+```
+
+
+# Scaled feature score dependency 
+
+```{r}
+
+# computing the correlations between each feature pair on scaled memory scores (these are 0 to 1, inputted into EEG models)
+dependency <- data.frame(matrix(0, nrow = NSubjs*3, ncol = 3))
+names(dependency) <- c("SubID","Pair","Dependency")
+
+
+row <- 0 
+for (idx in 1:length(subjects)) {
+
+  for (pair in 1:3) {
+    row = row + 1
+    if (pair == 1) {
+       myData <- subset(allData, SubID == subjects[idx])
+       name = 'ColorScore-SceneScore'
+       dependency$Dependency[row]  = fisherz(cor(myData$ColorQuality,myData$SceneQuality))
+    } else if (pair == 2) {
+       myData <- subset(allData, SubID == subjects[idx])
+       name = 'EmotionMemory-ColorScore'
+       dependency$Dependency[row]  = fisherz(cor(myData$EmotionMemory,myData$ColorQuality))
+    } else if (pair == 3) {
+       myData <- subset(allData, SubID == subjects[idx])
+       name = 'EmotionMemory-SceneScore'
+       dependency$Dependency[row]  = fisherz(cor(myData$EmotionMemory,myData$SceneQuality))
+    }
+    dependency$SubID[row] = myData$SubID[1]
+    dependency$Pair[row]  = name
+   }
+  }#end of loop through subjects    
+
+dependency$Pair <- as.factor(dependency$Pair)
+
+# correlations by pair, for later plotting
+relationship <- dependency %>% 
+              group_by(SubID, Pair)
+
+
+#t-tests, greater than 0?
+pander(t.test(relationship$Dependency[relationship$Pair == 'ColorScore-SceneScore'], mu=0))
+pander(t.test(relationship$Dependency[relationship$Pair == 'EmotionMemory-ColorScore'], mu=0))
+pander(t.test(relationship$Dependency[relationship$Pair == 'EmotionMemory-SceneScore'], mu=0))
+
+```
+
+# Plotting all results and saving out figures 
+
+```{r warning=FALSE}
+
+#color error distribution
+color <- ggplot(allData, aes(x = ColAbsError)) +
+    geom_histogram(bins = 61, color = 'white', fill = '#F8766D', aes(y=after_stat(density)), position=position_dodge(1)) + 
+    #geom_line(data = yCol, aes(x = error, y = prob)) +
+    xlab("Error") + ylab("p(Error)") + 
+    ggtitle("Color Errors") + 
+    #labs(tag = "A") + 
+    geom_vline(xintercept = colT, linetype = 2) + #geom_vline(xintercept = -colT, linetype = 2) +
+     theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title.x = element_text(margin = margin(r = 10)),
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm"))
+
+color
+
+#scene error distribution
+scene <- ggplot(allData, aes(x = SceAbsError)) +
+    geom_histogram(bins = 61, color = 'white', fill = '#00BFC4', aes(y=after_stat(density)), position=position_dodge(1)) + 
+    #geom_line(data = ySce, aes(x = error, y = prob)) +
+    xlab("Error") + ylab("p(Error)") +
+    ggtitle("Scene Error") + 
+    #labs(tag = "B") +
+    geom_vline(xintercept = sceT, linetype = 2) + #geom_vline(xintercept = -sceT, linetype = 2) +
+     theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title.x = element_text(margin = margin(r = 10)),
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm"))
+
+scene
+
+# memory quality scores
+mq <- ggplot(allData, aes(x = MemoryQuality)) +
+    geom_histogram(bins = 20, color = 'white', fill = '#C77CFF', aes(y=after_stat(density)), position=position_dodge(1)) + 
+    #geom_line(data = ySce, aes(x = error, y = prob)) +
+    xlab("Composite Memory Score") + ylab("Density") +
+    ggtitle("Memory Quality") + 
+    #labs(tag = "C") +
+     theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title.x = element_text(margin = margin(r = 10)),
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm"))
+mq
+
+# binary dependency
+p1 <- ggplot(success, aes(x = Pair, y=Difference, fill=Pair)) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.5) +
+    geom_dotplot(binaxis='y', stackdir='center', dotsize=1, alpha = 0.8) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                 width = 0.4, color = "black", size = 0.6) +
+    scale_fill_manual(values = c('#d8b0f7','#891fdb','#47017d')) + 
+    ylab("Dependency") + scale_y_continuous(limits = c(-0.12,0.24),
+                                                    expand = c(0,0),
+                                                    breaks = seq(-0.12,0.24,by = 0.06)) +
+    annotate('text', x = "Color-Scene", y = c(0.18), label='"***"', parse=TRUE, color = c("black"), size = 7) +
+    annotate('text', x = "Emotion-Color", y = c(0.14), label='"***"', parse=TRUE, color = c("black"), size = 7) +
+    annotate('text', x = "Emotion-Scene", y = c(0.18), label='"***"', parse=TRUE, color = c("black"), size = 7) +
+    ggtitle("Success Dependency") + 
+    #labs(tag = "D") +
+    geom_hline(yintercept = 0) +
+    scale_x_discrete(labels=c("Color\nScene","Color\nEmotion","Scene\nEmotion")) +
+     theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title = element_blank(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm"))
+p1
+
+# precision dependency 
+p2 <- ggplot(precision, aes(x = Pair, y=Dependency, fill=Pair)) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.5) +
+    geom_dotplot(binaxis='y', stackdir='center', dotsize=1, alpha = 0.8) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                 width = 0.4, color = "black", size = 0.6) +
+    scale_fill_manual(values = c('#d8b0f7','#891fdb','#47017d')) + 
+    ylab("Mean z") +scale_y_continuous(limits = c(-0.22,0.42), expand = c(0,0),
+                                        breaks = seq(-0.4,0.4,by = 0.1)) +
+  
+    annotate('text', x = "SceneS-ColorP", y = c(0.35), label='"***"', parse=TRUE, color = c("black"), size = 7) +
+    ggtitle("Precision Dependency") + 
+    #labs(tag = "E") +
+    geom_hline(yintercept = 0) +
+    scale_x_discrete(labels=c("Color.P\nScene.P","Color.S\nScene.P","Scene.S\nColor.P")) +
+     theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title = element_blank(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm"))
+
+p2
+
+# scaled score dependency 
+p3 <- ggplot(relationship, aes(x = Pair, y=Dependency, fill=Pair)) +
+    stat_summary(fun.y = mean, geom="bar", alpha = 0.5) +
+    geom_dotplot(binaxis='y', stackdir='center', dotsize=1, alpha = 0.8) +
+    stat_summary(fun.data = mean_se, geom = "errorbar", fun.args = list(mult = 1.96),
+                 width = 0.4, color = "black", size = 0.6) +
+    scale_fill_manual(values = c('#d8b0f7','#891fdb','#47017d')) + 
+    ylab("Mean z") + scale_y_continuous(limits = c(-0.22,0.5), expand = c(0,0),
+                                        breaks = seq(-0.5,0.5,by = 0.1)) +
+    annotate('text', x = "ColorScore-SceneScore", y = c(0.45), label='"***"', parse=TRUE, color = c("black"), size = 7) +
+    annotate('text', x = "EmotionMemory-ColorScore", y = c(0.4), label='"***"', parse=TRUE, color = c("black"), size = 7) +
+    annotate('text', x = "EmotionMemory-SceneScore", y = c(0.45), label='"***"', parse=TRUE, color = c("black"), size = 7) +
+    ggtitle("Scaled Score Dependency") + 
+    geom_hline(yintercept = 0) +
+    scale_x_discrete(labels=c("Color\nScene","Emotion\nColor","Emotion\nScene")) +
+     theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title = element_blank(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm"))
+p3
+
+# combine figures for saving
+behav.figures <- ggarrange(color, scene, mq, nrow = 1, widths = c(1.2,1.2, 1.2), labels = c("A", "B", "C"), font.label = list(color = "black", size = 26, family = "Arial", face = "bold"))
+behav.figures
+
+dep.figures <- ggarrange(p1, p2, p3, nrow =1, labels = c("D", "E", "F"), font.label = list(color = "black", size = 26, family = "Arial", face = "bold"))
+dep.figures
+
+all.figures <- ggarrange(behav.figures, dep.figures, nrow = 2)
+all.figures
+          
+# save figure to output directory
+ggsave("Figure2.tiff", path = figureDir, height = 8, width = 15)
+ggsave("Figure2.png", path = figureDir, height = 8, width = 15)
+
+
+```

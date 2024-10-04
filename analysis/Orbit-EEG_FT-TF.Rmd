@@ -1,0 +1,408 @@
+---
+title: "Orbit-EEG TF Feature Data"
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+
+This markdown uses EEG data analyzed using the Limo Toolbox (for eeglab) to plot time-frequency beta values for individual features (color, scene, emotion).
+
+```{r, include = FALSE}
+
+### load in all necessary packages
+x <- c("ggplot2", "shiny", "ggpubr", "dplyr", "knitr", "tidyr", "tidyverse", "magrittr", "grid", "gridExtra", "pander", "ez", "car", "ggsignif", "formattable", "psych", "reshape2", "afex", "akima", "lsr", "readr", "scales", "mgcv", "png", "rstatix")
+require(x)
+lapply(x, require, character.only = TRUE)
+
+### define computer paths
+myComp <- '/Users/natalia/Desktop/orbit-EEG/'
+figureDir <- paste(myComp, 'figures', sep = "") 
+
+### define all functions
+ci <- function(x) (sqrt(var(x)/length(x)))*1.96  #function to calculate 95% confidence interval
+se <- function(x) sqrt(var(x)/length(x))  #function to calculate SE
+jet.colors <- colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000")) #for topoplots
+
+### load in all memory quality TF data
+myFile <- paste(myComp,'data/AllData_EEG-FT_TF.csv', sep = "")
+allData <- read.csv(myFile)
+
+### add frequency bins (theta: 5-7 hz, alpha: 8-12 hz, beta: 13-30 hz)
+allData$freqbin[c(allData$freq > 4 & allData$freq < 8)] <- 'theta'
+allData$freqbin[c(allData$freq >= 8 & allData$freq <= 12)] <- 'alpha'
+allData$freqbin[c(allData$freq > 12 & allData$freq <= 30)] <- 'beta'
+
+### factor columns
+allData <- allData %>% 
+  mutate_if(is.character,as.factor)
+
+```
+
+
+# Feature Memory Effect - Significant TF Clusters
+
+```{r, message=FALSE, warning=FALSE}
+
+# subset all data to include only time points 0-4000ms (i.e., covert recall period)
+allData.time <- subset(allData, time >= 0)
+
+# Positive clusters for feature memory
+cluster <- subset(allData.time, correctedP.pos < 1)
+
+### color
+  color.cluster <- subset(cluster, feature == "color")
+  color.cluster$cluster <- 0
+
+  color.cluster <- color.cluster[order(color.cluster$time),]
+
+  count <- 1
+  for (i in 1:nrow(color.cluster)) {
+    if (i == nrow(color.cluster)) {break}
+    else if (abs(color.cluster[i,2] - color.cluster[i+1,2]) <= 40) {color.cluster[i,12] <- count}
+    else if (abs(color.cluster[i,2] - color.cluster[i+1,2]) > 40) {color.cluster[i,12] <- count; count <- count + 1}
+  }
+  color.cluster$cluster[color.cluster$cluster == 0] <- count
+
+  print(paste0("Number of positive clusters for color: ", count))
+
+  cluster.info <- data.frame(cluster = array(0,count), times = array(0,count), freqs = array(0,count), chans = array(0,count))
+  allcluster.info <- data.frame()
+  for (i in 1:count) {
+    this.cluster <- subset(color.cluster, cluster == i)
+    cluster.info$cluster[i] <- i
+    cluster.info$times[i] <- list(round(range(this.cluster$time),2))
+    cluster.info$freqs[i] <- list(round(range(this.cluster$freq),2))
+    cluster.info$chans[i] <- list(unique(as.character(this.cluster$channel)))
+  }
+
+  kable(cluster.info, caption = "Positive Cluster Information - color")
+
+### emotion (NB: no positive clusters survive)
+  emotion.cluster <- subset(cluster, feature == "emotion")
+  count <- length(emotion.cluster$correctedP.pos < 1)
+  
+  print(paste0("Number of positive clusters for emotion: ", count))
+
+### scene
+  scene.cluster <- subset(cluster, feature == "scene")
+  scene.cluster$cluster <- 0
+
+  scene.cluster <- scene.cluster[order(scene.cluster$time),]
+
+  count <- 1
+  for (i in 1:nrow(scene.cluster)) {
+    if (i == nrow(scene.cluster)) {break}
+    else if (abs(scene.cluster[i,2] - scene.cluster[i+1,2]) <= 40) {scene.cluster[i,12] <- count}
+    else if (abs(scene.cluster[i,2] - scene.cluster[i+1,2]) > 40) {scene.cluster[i,12] <- count; count <- count + 1}
+  }
+  scene.cluster$cluster[scene.cluster$cluster == 0] <- count
+
+  print(paste0("Number of positive clusters for scene: ", count))
+
+  cluster.info <- data.frame(cluster = array(0,count), times = array(0,count), freqs = array(0,count), chans = array(0,count))
+  allcluster.info <- data.frame()
+  for (i in 1:count) {
+    this.cluster <- subset(scene.cluster, cluster == i)
+    cluster.info$cluster[i] <- i
+    cluster.info$times[i] <- list(round(range(this.cluster$time),2))
+    cluster.info$freqs[i] <- list(round(range(this.cluster$freq),2))
+    cluster.info$chans[i] <- list(unique(as.character(this.cluster$channel)))
+  }
+
+  kable(cluster.info, caption = "Positive Cluster Information - scene")
+
+  
+
+# Negative clusters for feature memory
+cluster <- subset(allData.time, correctedP.neg < 1)
+
+### color
+  color.cluster <- subset(cluster, feature == "color")
+  color.cluster$cluster <- 0
+
+  color.cluster <- color.cluster[order(color.cluster$time),]
+
+  count <- 1
+  for (i in 1:nrow(color.cluster)) {
+    if (i == nrow(color.cluster)) {break}
+    else if (abs(color.cluster[i,2] - color.cluster[i+1,2]) <= 40) {color.cluster[i,12] <- count}
+    else if (abs(color.cluster[i,2] - color.cluster[i+1,2]) > 40) {color.cluster[i,12] <- count; count <- count + 1}
+  }
+  color.cluster$cluster[color.cluster$cluster == 0] <- count
+
+  print(paste0("Number of Negative clusters for color: ", count))
+
+  cluster.info <- data.frame(cluster = array(0,count), times = array(0,count), freqs = array(0,count), chans = array(0,count))
+  allcluster.info <- data.frame()
+  for (i in 1:count) {
+    this.cluster <- subset(color.cluster, cluster == i)
+    cluster.info$cluster[i] <- i
+    cluster.info$times[i] <- list(round(range(this.cluster$time),2))
+    cluster.info$freqs[i] <- list(round(range(this.cluster$freq),2))
+    cluster.info$chans[i] <- list(unique(as.character(this.cluster$channel)))
+  }
+
+  kable(cluster.info, caption = "Negative Cluster Information - color")
+
+### emotion (NB: no Negative clusters survive)
+  emotion.cluster <- subset(cluster, feature == "emotion")
+  emotion.cluster$cluster <- 0
+
+  emotion.cluster <- emotion.cluster[order(emotion.cluster$time),]
+
+  count <- 1
+  for (i in 1:nrow(emotion.cluster)) {
+    if (i == nrow(emotion.cluster)) {break}
+    else if (abs(emotion.cluster[i,2] - emotion.cluster[i+1,2]) <= 40) {emotion.cluster[i,12] <- count}
+    else if (abs(emotion.cluster[i,2] - emotion.cluster[i+1,2]) > 40) {emotion.cluster[i,12] <- count; count <- count + 1}
+  }
+  emotion.cluster$cluster[emotion.cluster$cluster == 0] <- count
+
+  print(paste0("Number of Negative clusters for emotion: ", count))
+
+  cluster.info <- data.frame(cluster = array(0,count), times = array(0,count), freqs = array(0,count), chans = array(0,count))
+  allcluster.info <- data.frame()
+  for (i in 1:count) {
+    this.cluster <- subset(emotion.cluster, cluster == i)
+    cluster.info$cluster[i] <- i
+    cluster.info$times[i] <- list(round(range(this.cluster$time),2))
+    cluster.info$freqs[i] <- list(round(range(this.cluster$freq),2))
+    cluster.info$chans[i] <- list(unique(as.character(this.cluster$channel)))
+  }
+
+  kable(cluster.info, caption = "Negative Cluster Information - emotion")
+
+### scene
+  scene.cluster <- subset(cluster, feature == "scene")
+  scene.cluster$cluster <- 0
+
+  scene.cluster <- scene.cluster[order(scene.cluster$time),]
+
+  count <- 1
+  for (i in 1:nrow(scene.cluster)) {
+    if (i == nrow(scene.cluster)) {break}
+    else if (abs(scene.cluster[i,2] - scene.cluster[i+1,2]) <= 40) {scene.cluster[i,12] <- count}
+    else if (abs(scene.cluster[i,2] - scene.cluster[i+1,2]) > 40) {scene.cluster[i,12] <- count; count <- count + 1}
+  }
+  scene.cluster$cluster[scene.cluster$cluster == 0] <- count
+
+  print(paste0("Number of Negative clusters for scene: ", count))
+
+  cluster.info <- data.frame(cluster = array(0,count), times = array(0,count), freqs = array(0,count), chans = array(0,count))
+  allcluster.info <- data.frame()
+  for (i in 1:count) {
+    this.cluster <- subset(scene.cluster, cluster == i)
+    cluster.info$cluster[i] <- i
+    cluster.info$times[i] <- list(round(range(this.cluster$time),2))
+    cluster.info$freqs[i] <- list(round(range(this.cluster$freq),2))
+    cluster.info$chans[i] <- list(unique(as.character(this.cluster$channel)))
+  }
+
+  kable(cluster.info, caption = "Negative Cluster Information - scene")
+
+```
+
+
+# Feature EFfects Time-Frequency Plots (all channels)
+
+```{r, warning= FALSE, message=FALSE}
+
+#features.subset <- kit::funique(allData.time)
+
+# color
+color_TF.subset <- subset(features.subset, feature == "color")
+color_TF.subset <- subset(color_TF.subset, correctedP.pos < 1 | correctedP.neg <1)
+
+## summarize t-values by time and frequency, across all channels
+color_TF.summary <- color_TF.subset %>%
+    group_by(time,freq) %>%
+      summarize(t.chan = mean(tvalue)) #avg across channels
+
+## Plot time-frequency
+color_freqbands <- ggplot(color_TF.summary, aes(x=time, y=freq)) + 
+  geom_tile(aes(color = t.chan, fill=t.chan), size = 2) +
+  geom_vline(xintercept = 0, linetype = 2, size=0.5, color="black") +
+  scale_fill_gradientn(colours = jet.colors(9), oob=squish, limits = c(-5,5)) + 
+  scale_color_gradientn(colours = jet.colors(9), oob=squish,limits = c(-5,5)) +
+  ggtitle("Color") +
+  labs(fill = expression(paste(italic("t"), "-value")), color = expression(paste(italic("t"), "-value"))) + 
+  theme(plot.title = element_text(colour = "black", size = 22,hjust=0.5, vjust = -0.25),
+        axis.line = element_line(colour = "black"), axis.text = element_text(size=12), 
+        axis.title.y = element_text(margin = margin(r = 3), size = 18),
+        plot.margin = unit(c(0.5,0.5,0.25,0.25), "cm"),
+        panel.background = element_rect(fill = "gray92"),
+        panel.grid = element_blank(),
+        axis.title.x = element_text(size=18, margin = margin(t = 4)),text = element_text(family="Avenir"), legend.title = element_text(size = 12),
+        legend.text = element_text(size=9), legend.key.width=unit(0.7, "cm"), legend.key.height = unit(0.6,"cm"))
+
+## Change y-axis to logorithmic scale for clarity and add boxes for significant negative clusters
+color_freqbandslog <- color_freqbands + scale_y_log10(name="Frequency (Hz)",breaks=c(5,10,15,20,25,30),labels=c(5,10,15,20,25,30), limits = c(5,30), expand = c(0,0)) +
+    scale_x_continuous(name="Time (ms)",  breaks=seq(0,4000,500), expand=c(0,.01,0,.01), limits = c(0,4000)) + 
+    geom_rect(aes(ymin = 12.69, ymax = 18.17, xmin = 267.58, xmax = 414.06), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 20.96, ymax = 29.5, xmin = 828.12, xmax = 947.27), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 6.2, ymax = 16.91, xmin = 1125, xmax = 1539.06), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 9.53, ymax = 13.64, xmin = 2099.61, xmax = 2335.94), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 10.24, ymax = 16.91, xmin = 3873.05, xmax = 3992.19), fill = "transparent", color = "black", size = 1)
+
+print(color_freqbandslog)
+
+
+# emotion
+emotion_TF.subset <- subset(features.subset, feature == "emotion")
+emotion_TF.subset <- subset(emotion_TF.subset, correctedP.pos < 1 | correctedP.neg <1)
+
+## summarize t-values by time and frequency, across all channels
+emotion_TF.summary <- emotion_TF.subset %>%
+    group_by(time,freq) %>%
+      summarize(t.chan = mean(tvalue)) #avg across channels
+
+## Plot time-frequency
+emotion_freqbands <- ggplot(emotion_TF.summary, aes(x=time, y=freq)) + 
+  geom_tile(aes(color = t.chan, fill=t.chan), size = 2) +
+  geom_vline(xintercept = 0, linetype = 2, size=0.5, color="black") +
+  scale_fill_gradientn(colours = jet.colors(9), oob=squish, limits = c(-5,5)) + 
+  scale_color_gradientn(colours = jet.colors(9), oob=squish,limits = c(-5,5)) +
+  ggtitle("Emotion") +
+  labs(fill = expression(paste(italic("t"), "-value")), color = expression(paste(italic("t"), "-value"))) + 
+  theme(plot.title = element_text(colour = "black", size = 22,hjust=0.5, vjust = -0.25),
+        axis.line = element_line(colour = "black"), axis.text = element_text(size=12), 
+        axis.title.y = element_text(margin = margin(r = 0), size = 18, color = "white"),
+        plot.margin = unit(c(0.5,0.5,0.25,0.25), "cm"),
+        panel.background = element_rect(fill = "gray92"),
+        panel.grid = element_blank(),
+        axis.title.x = element_text(size=18, margin = margin(t = 4)),text = element_text(family="Avenir"), legend.title = element_text(size = 12),
+        legend.text = element_text(size=9), legend.key.width=unit(0.7, "cm"), legend.key.height = unit(0.6,"cm"))
+
+## Change y-axis to logorithmic scale for clarity and add boxes for significant negative clusters
+emotion_freqbandslog <- emotion_freqbands + scale_y_log10(name="Frequency (Hz)", breaks=c(5,10,15,20,25,30),labels=c(5,10,15,20,25,30), limits = c(5,30), expand = c(0,0)) +
+    scale_x_continuous(name="Time (ms)",  breaks=seq(0,4000,500), expand=c(0,.01,0,.01), limits = c(0,4000)) + 
+    geom_rect(aes(ymin = 24.20, ymax = 27.93, xmin = 384.77, xmax = 414.06), fill = "transparent", color = "black", size = 1) +
+    geom_rect(aes(ymin = 5.00, ymax = 20.96, xmin = 769.53, xmax = 1035.16), fill = "transparent", color = "black", size = 1) +
+    geom_rect(aes(ymin = 13.64, ymax = 24.20, xmin = 1332.03, xmax = 1390.62), fill = "transparent", color = "black", size = 1) +
+    geom_rect(aes(ymin = 5.77, ymax = 30.00, xmin = 1507.81, xmax = 1921.88), fill = "transparent", color = "black", size = 1) +
+    geom_rect(aes(ymin = 6.20, ymax = 25.99, xmin = 2218.75, xmax = 2425.78), fill = "transparent", color = "black", size = 1) +
+    geom_rect(aes(ymin = 6.66, ymax = 11.82, xmin = 2691.41, xmax = 2869.14), fill = "transparent", color = "black", size = 1)
+
+print(emotion_freqbandslog)
+
+
+# scene
+scene_TF.subset <- subset(features.subset, feature == "scene")
+scene_TF.subset <- subset(scene_TF.subset, correctedP.pos < 1 | correctedP.neg <1)
+
+## summarize t-values by time and frequency, across all channels
+scene_TF.summary <- scene_TF.subset %>%
+    group_by(time,freq) %>%
+      summarize(t.chan = mean(tvalue)) #avg across channels
+
+## Plot time-frequency
+scene_freqbands <- ggplot(scene_TF.summary, aes(x=time, y=freq)) + 
+  geom_tile(aes(color = t.chan, fill=t.chan), size = 2) +
+  geom_vline(xintercept = 0, linetype = 2, size=0.5, color="black") +
+  scale_fill_gradientn(colours = jet.colors(9), oob=squish, limits = c(-5,5)) + 
+  scale_color_gradientn(colours = jet.colors(9), oob=squish,limits = c(-5,5)) +
+  ggtitle("Scene") +
+  labs(fill = expression(paste(italic("t"), "-value")), color = expression(paste(italic("t"), "-value"))) + 
+  theme(plot.title = element_text(colour = "black", size = 22,hjust=0.5, vjust = -0.25),
+        axis.line = element_line(colour = "black"), axis.text = element_text(size=12), 
+        axis.title.y = element_text(margin = margin(r = 0), size = 18, color = "white"),
+        plot.margin = unit(c(0.5,0,0.25,0.25), "cm"),
+        panel.background = element_rect(fill = "gray92"),
+        panel.grid = element_blank(),
+        axis.title.x = element_text(size=18, margin = margin(t = 4)),text = element_text(family="Avenir"), legend.title = element_text(size = 12),
+        legend.text = element_text(size=9), legend.key.width=unit(0.7, "cm"), legend.key.height = unit(0.6,"cm"))
+
+## Change y-axis to logorithmic scale for clarity and add boxes for significant negative clusters
+scene_freqbandslog <- scene_freqbands + scale_y_log10(name="Frequency (Hz)", breaks=c(5,10,15,20,25,30),labels=c(5,10,15,20,25,30), limits = c(5,30), expand = c(0,0)) +
+    scale_x_continuous(name="Time (ms)",  breaks=seq(0,4000,500), expand=c(0,.01,0,.01), limits = c(0,4000)) + 
+    geom_rect(aes(ymin = 16.91, ymax = 22.52, xmin = 652.34, xmax = 710.94), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 12.69, ymax = 24.20, xmin = 1419.92, xmax = 1568.36), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 14.65, ymax = 22.52, xmin = 1714.84, xmax = 1775.39), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 11.82, ymax = 25.99, xmin = 1921.88, xmax = 2070.31), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 6.66, ymax = 20.96, xmin = 2128.91, xmax = 2425.78), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 8.26, ymax = 22.52, xmin = 2601.56, xmax = 3134.77), fill = "transparent", color = "black", size = 1)+
+    geom_rect(aes(ymin = 11.82, ymax = 16.91, xmin = 3814.45, xmax = 3902.34), fill = "transparent", color = "black", size = 1)
+
+print(scene_freqbandslog)
+
+```
+
+# Correspondence between negative clusters for Memory Quality (see Orbit-EEG_MQ-TF.Rmd) and negative clusters for each feature
+
+```{r, warning= FALSE, message=FALSE}
+
+### Identify memory quality clusters from MQ analysis
+features.subset <- within(features.subset, {
+	  MQclusters = ifelse(time >= 799 & time <= 918 & freq >= 15.74 & freq <= 30, "cluster1", ifelse(time >= 1125 & time <= 2277 & freq >= 9.53 & freq <= 30, "cluster2", ifelse(time >= 2840 & time <= 3105 & freq >= 5.27 & freq <= 16.91, "cluster3", "NONE")))
+	})
+	                    
+### summarize by feature, channel, and MQ cluster
+features.cluster <- features.subset %>% 
+  filter(MQclusters != "NONE") %>%
+  group_by(feature, channel, MQclusters) %>% 
+  summarize(t.chan = mean(tvalue), clustercorr = mean(correctedP.neg, na.rm = TRUE))
+
+### summarize stats (cluster corrected p-values for plotting)
+features.cluster.summary <- features.cluster %>% 
+  group_by(feature, MQclusters) %>% 
+  summarize(pcorr = mean(clustercorr, na.rm = TRUE))
+
+### Plotting effect within MQ clusters
+FT_MQcluster <- ggplot(features.cluster, aes(x = MQclusters, y = t.chan, fill = feature))+
+  geom_boxplot(color = "black", size = 0.5, alpha = 0.7, outliers = FALSE, aes(fill = feature, outlier.fill = feature)) +
+  scale_y_continuous(limits = c(-3,2)) +
+  stat_boxplot(geom = "errorbar", width = 0.15, notch = TRUE, position=position_dodge(width=.75)) +
+  geom_hline(yintercept = 0, linetype='dashed', size=0.5) +
+  xlab("Memory Quality Negative Clusters") +
+  ylab("Average effect") +
+  scale_fill_discrete(name = "Feature", labels=c("color" = "Color", "emotion" = "Emotion", "scene" = "Scene") ) +
+  annotate('text', x = c(0.75,0.75), y = c(0.2), label='"*"', parse=TRUE, color = c("black"), size = 6) +
+  annotate('text', x = c(1,1), y = c(0.2), label='"**"', parse=TRUE, color = c("black"), size = 6) +
+  annotate('text', x = c(1.75,1.75), y = c(0.1), label='"**"', parse=TRUE, color = c("black"), size = 6) +
+  annotate('text', x = c(2,2), y = c(0.15), label='"**"', parse=TRUE, color = c("black"), size = 6) +
+  annotate('text', x = c(2.25,2.25), y = c(0.2), label='"**"', parse=TRUE, color = c("black"), size = 6) +
+  annotate('text', x = c(3,3), y = c(0.8), label='"**"', parse=TRUE, color = c("black"), size = 6) +
+  annotate('text', x = c(3.25,3.25), y = c(0.4), label='"**"', parse=TRUE, color = c("black"), size = 6) +
+  scale_x_discrete(labels=c("cluster1" = "Cluster 1", "cluster2" = "Cluster 2",
+                              "cluster3" = "Cluster 3"))+
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        axis.title.y = element_text(margin = margin(r = 5), size = 20),
+        plot.margin = unit(c(0.75,0,0.25,0.25), "cm"),
+        legend.title = element_text(hjust = 0.5, size = 16),
+        axis.title.x = element_text(margin = margin(t = 2), size = 20),
+        axis.line = element_line(colour = "black"), axis.text = element_text(size=12), 
+        axis.title = element_text(size=20),text = element_text(family="Avenir"),
+        legend.key.width=unit(1, "cm"), legend.key.height = unit(1,"cm"))
+  
+
+print(FT_MQcluster)
+
+
+```
+
+### Save MQ TF figures
+
+```{r warning = FALSE, message = FALSE}
+
+upperfigures <- ggarrange(color_freqbandslog, emotion_freqbandslog, scene_freqbandslog, nrow = 1, ncol = 3, labels = c("A", "", ""), widths = c(1,1,1), font.label = list(color = "black", size = 26, family = "Arial", face = "bold"), common.legend = TRUE, legend = "right")
+upperfigures
+
+lowerfigures <- ggarrange(FT_MQcluster, nrow = 1, ncol = 1, labels = c("B"), font.label = list(color = "black", size = 26, family = "Arial", face = "bold"))
+lowerfigures
+
+all.figures <- ggarrange(upperfigures, lowerfigures, nrow = 2, ncol = 1)
+all.figures
+
+# save figure to output directory
+ggsave("Figure6.tiff", path = figureDir, width = 12, height = 12)
+ggsave("Figure6.png", path = figureDir, width = 12, height = 12)
+
+```

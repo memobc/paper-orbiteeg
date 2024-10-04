@@ -1,0 +1,390 @@
+---
+title: "Orbit-EEG ERP Memory Quality Data"
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+
+This markdown uses EEG data that has been analyzed using the Limo Toolbox (for eeglab) to plot ERP beta values over time for overall memory quality.
+
+Beta values reflect a correlation between ERP power and behavior (here, composite memory quality score).
+
+```{r, include = FALSE}
+
+### load in all necessary packages
+x <- c("ggplot2", "shiny", "ggpubr", "dplyr", "knitr", "tidyr", "tidyverse", "magrittr", "grid", "gridExtra", "pander", "ez", "car", "smoothmath", "ggsignif", "formattable", "psych", "reshape2", "afex", "akima", "lsr", "readr","gtable", "scales", "mgcv", "png", "rstatix")
+require(x)
+lapply(x, require, character.only = TRUE)
+
+### define computer paths
+myComp <- '/Users/natalia/Desktop/orbit-EEG/'
+figureDir <- paste(myComp, 'figures', sep = "") 
+
+### define all functions
+ci <- function(x) (sqrt(var(x)/length(x)))*1.96  #function to calculate 95% confidence interval
+se <- function(x) sqrt(var(x)/length(x))  #function to calculate SE
+colors <- c("#F8766D", "#7CAE00", "#00BFC4", "#C77CFF") # color palette for features and memory quality in paper
+jet.colors <- colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000")) #for topoplots
+
+### load in all memory quality ERP data
+myFile <- paste(myComp,'data/AllData_EEG-MQ_ERP.csv', sep = "")
+allData <- read.csv(myFile)
+
+subjects <- unique(allData$subject)
+NSubjs <- length(subjects)
+
+### Subset alLData to create dataframes with channels, LPC window, for later analyses
+
+#### channels, but all timepoints
+channelData <- subset(allData, (channel == "CP5" | channel == "CP3" | channel == "CPz" | channel == "CP4" | channel == "CP6" | channel == "P3" | channel == "Pz" | channel == "P4" | channel == "CP1" | channel == "CP2" | channel == "P1" | channel == "P2"))
+
+#### channels and LPC window timepoints
+LPCData <- subset(channelData, time >= 500 & time <= 800)
+
+#### all channels, but only LPC window timepoints
+LPCchannelData <- subset(allData, time >= 500 & time <= 800)
+
+
+```
+
+# Memory Quality x ERP Power effect
+### Averaged across subjects and channels, across full trial time (-250 to 1000)
+
+
+```{r, warning= FALSE, message=FALSE}
+
+# find average betas across channels (keeping all subjects and times)
+MQ.subj.summary <- channelData %>%
+    group_by(subject,time) %>%
+      summarise(chan.beta = mean(beta)) 
+
+# next, average betas across channels, and subjects
+MQ.summary <- MQ.subj.summary %>%
+  group_by(time) %>%
+    summarise(mean.beta = mean(chan.beta),
+              se.beta = se(chan.beta))
+
+# plot the time course across all channels 
+erp <- ggplot(MQ.summary, aes(x = time, y = mean.beta, ymin = (mean.beta - se.beta), ymax = (mean.beta + se.beta))) +
+  geom_rect(aes(xmin = 500, xmax = 800, ymin = -Inf, ymax = Inf), fill = "gray92", size = 1.5) +
+  geom_ribbon(alpha = 0.3, fill = colors[4]) +
+  geom_line(size = 0.8, color = colors[4]) + 
+  geom_vline(xintercept=0, linetype="dashed", size=0.5) +
+  geom_hline(yintercept = 0, linetype='dashed', size=0.5) +
+  scale_x_continuous(breaks=seq(-250,1000,250), limits = c(-250,1000)) + 
+  scale_y_continuous(limits = c(-1.5, 1.5), breaks=seq(-1.5,1.5,0.5))+
+  theme_light() + 
+  xlab("Time (ms)") + ylab("Average Effect") +
+  theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 12), 
+          axis.title.x = element_text(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.25,0.25,0.5), "cm"))
+
+print(erp)
+
+```
+
+## Stats
+Run a one-sample t-test at every time point from 0 - 1000 ms to see where subject betas differ from 0. 
+
+Here I go through all time points and run a one-sample t-test. I then run an FDR correction on the resulting p-values from these t-tests. 
+
+### Memory Quality
+
+```{r, warning= FALSE, message=FALSE}
+
+#filter to 0-1000 ms only
+channelData.subset <- subset(channelData, time >= 0)
+
+# summarize across channels
+channelData.summary <- channelData.subset %>%
+    group_by(subject,time) %>%
+      summarise(chan.beta = mean(beta)) 
+
+# run a one-sample t-test at every time point (all subjects mean betas) to see where those betas significantly differ from 0
+times <- unique(channelData.summary$time)
+
+MQstats <- data.frame()
+for (i in 1:length(times)) {#loop through all times
+  thisTime <- times[i]
+  test <- subset(channelData.summary, time == thisTime) #filter to one time point
+  stat.result <- t.test(test$chan.beta, mu = 0, alternative = "two.sided") #run a one sample t test for this time point
+  stat.result2 <- cohensD(test$chan.beta, mu = 0)
+  test$pvalue <- stat.result$p.value #store pvalue from t test in df
+  test$tvalue <- stat.result$statistic
+  test$cohensD <- stat.result2
+  test$df <- stat.result$parameter
+  MQstats <- rbind.data.frame(MQstats,test)} #rbind all time points
+
+# FDR correction across all time points to correct for multiple comparisons across time
+MQstats$corrected.p <- p.adjust(MQstats$pvalue, method = "fdr")
+print(paste("Minimum p-value (FDR corrected): ", round(min(MQstats$corrected.p), digits = 4)))
+print(paste("Maximum p-value (FDR corrected): ", round(max(MQstats$corrected.p), digits = 4)))
+
+```
+
+
+## Memory Quality x ERP Power effect within LPC Window (500-800 ms)
+
+```{r, warning= FALSE, message=FALSE}
+
+# collapse across times and channels in ROI
+LPC.summary <- LPCData %>%
+  group_by(subject) %>% 
+      summarise(meanbeta = mean(beta))
+
+# add "feature" column to label x-axis
+LPC.summary$feature <- "Memory Quality"
+
+# check assumptions
+pander(LPC.summary %>% identify_outliers(meanbeta)) # check outliers
+pander(LPC.summary %>% shapiro_test(meanbeta)) # check normality
+
+# do memory quality beta values significantly differ from zero?
+pander(wilcox.test(LPC.summary$meanbeta, mu = 0, conf.int = 0.95, alternative = "two.sided"))
+pander(LPC.summary %>% wilcox_effsize(meanbeta ~ 1, mu = 0))
+
+# plot
+meanerp <- ggplot(LPC.summary, aes(x=feature, y=meanbeta)) + 
+  geom_boxplot(color = "black", fill = colors[4], size = 0.5, alpha = 0.7, outliers = FALSE)+
+  stat_boxplot(geom = "errorbar", width = 0.15, notch = TRUE) +
+  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8,  alpha = 0.7, fill = "#891fdb") +
+  geom_hline(yintercept = 0, linetype='dashed', size=0.5) +
+  scale_y_continuous(limits = c(-2, 4.5), breaks = seq(-2,4,1)) +
+  annotate('text', x = "Memory Quality", y = c(4.3), label='"*"', parse=TRUE, color = c("black"), size = 9) +
+  xlab("Memory Quality") + ylab("Average Effect") +
+  theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text.x = element_blank(), 
+          axis.title.x = element_text(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_rect(fill = "gray92"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.25,0.25,0.75), "cm"))
+
+print(meanerp)
+
+
+```
+
+## Topoplot functions
+#### functions from Matt Craddock (https://www.mattcraddock.com/blog/2017/02/25/erp-visualization-creating-topographical-scalp-maps-part-1/)
+
+```{r warning = FALSE, message = FALSE}
+
+### define custom functions for topoplot: 
+theme_topo <- function(base_size = 12)
+  {
+  theme_bw(base_size = base_size) %+replace%
+      theme(
+            rect = element_blank(),
+            line = element_blank(),
+            axis.text = element_blank(),
+            axis.title = element_blank(),
+            plot.title = element_text(size=20, 
+                                      margin=margin(2,2,3,2), face="plain"),  
+            legend.title = element_text(size=15), legend.text = element_text(size=12),
+            legend.key.width = unit(0.7,"cm"), legend.key.height = unit(0.7,"cm"),
+            plot.tag = element_text(vjust = -3.5, hjust = -2),
+            plot.margin = margin(0, 0, 0, 0, "cm")
+           )
+}
+circleFun <- function(center = c(0,0),diameter = 1.4, npoints = 100) {
+  r = diameter / 2
+  tt <- seq(0,2*pi,length.out = npoints)
+  xx <- center[1] + r * cos(tt)
+  yy <- center[2] + r * sin(tt)
+  return(data.frame(x = xx, y = yy))
+}
+maskRing <- circleFun() #create a circle round the outside of the plotting area to mask the jagged edges
+
+# As it's 64 channel locations generated from EEGLab, I assume Matt Craddock's matches our locations
+electrodeLocs <- read_delim("https://raw.githubusercontent.com/craddm/ExploringERPs/master/biosemi70elecs.loc",
+                            "\t",
+                            escape_double = FALSE,
+                            col_names = c("chanNo","theta","radius","channel"),
+                            trim_ws = TRUE)
+
+# convert from polar to cartesian format:
+electrodeLocs$radianTheta <- pi/180*electrodeLocs$theta
+electrodeLocs <- electrodeLocs %>%
+  mutate(x = .$radius*sin(.$radianTheta),
+         y = .$radius*cos(.$radianTheta))
+
+# head shape for topoplot
+headShape <- circleFun(c(0, 0), round(max(electrodeLocs$x)), npoints = 100) # 0
+nose <- data.frame(x = c(-0.075,0,.075),y=c(.495,.575,.495))
+
+gridRes = 60 #for interpolation
+
+locs <- ggplot(headShape,aes(x,y))+
+  geom_path()+
+  geom_text(data = electrodeLocs,
+            aes(x, y, label = channel))+
+  geom_line(data = nose,
+            aes(x, y, z = NULL))+
+  theme_topo()+
+  coord_equal()
+
+
+locs
+
+```
+
+
+# Topoplot of LPC effect for memory quality
+
+Here, I average beta values across time points from 500-800ms. Then, I run a one sample t-test for each channel to see where beta values differ from zero. 
+
+```{r warning = FALSE, message = FALSE}
+
+## collapse across 500-800ms time points
+times <- LPCchannelData %>%
+  group_by(subject, channel) %>%
+    summarize(meanbeta = mean(beta)) #average betas across time points
+
+## list channels to iterate t-tests over, should be length = 64
+channels <- unique(as.character(times$channel))
+
+## run one-sample t-tests, mu = 0
+topoMQstats <- data.frame()
+for (i in 1:length(channels)) { #loop through all channels
+  thisChannel <- channels[i] #select channel
+  test <- subset(times, channel == thisChannel) #filter to one channels
+  stat.result <- t.test(test$meanbeta, mu = 0, alternative = "two.sided") #run one sample t test
+  test$pvalue <- stat.result$p.value #store p value in df
+  test$tvalue <- stat.result$statistic #store t value in df
+  topoMQstats <- rbind.data.frame(topoMQstats, test)} #bind all channels
+
+## Summarize values across subjects for plotting
+channel_ERP_MQ <- topoMQstats %>%
+  group_by(channel) %>%
+  summarize(beta = mean(meanbeta), 
+            pvalue = mean(pvalue),
+            tvalue = mean(tvalue))
+
+```
+
+### Memory Quality
+
+```{r warning = FALSE, message = FALSE}
+
+## Add electrode data to stats
+singleTimepoint <- channel_ERP_MQ %>% left_join(electrodeLocs, by = "channel")
+gridRes <- 67 # Specify the number of points for each grid dimension i.e. the resolution/smoothness of the interpolation
+tmpTopo <- with(singleTimepoint,
+                interp(x = x, y = y, z = tvalue, 
+                       xo = seq(min(x)*2,
+                                max(x)*2,
+                                length = gridRes),
+                       yo = seq(min(y)*2,
+                                max(y)*2,
+                                length = gridRes),
+                       linear = FALSE,
+                       extrap = TRUE)
+                ) 
+interpTopo <- data.frame(x = tmpTopo$x, tmpTopo$z)
+names(interpTopo)[1:length(tmpTopo$y)+1] <- tmpTopo$y
+interpTopo <- gather(interpTopo,
+                    key = y,
+                    value = tvalue, 
+                    -x,
+                    convert = TRUE)
+
+## setup data for topoplot
+interpTopo$incircle <- sqrt(interpTopo$x^2 + interpTopo$y^2) < .7 # mark grid elements that are outside of the plotting circle
+interpTopo <- interpTopo[interpTopo$incircle,] #remove the elements outside the circle
+maskRing <- circleFun(diameter = 1.42) #create a circle round the outside of the plotting area to mask the jagged edges of the interpolation
+
+## subset significant channels to graph with different dot shape in topoplot
+sig.channels <- subset(singleTimepoint, pvalue <= 0.05)
+
+## topoplot of MQ ERP effect 
+akimaLPC <- ggplot(interpTopo,
+                    aes(x = x, y = y, fill = tvalue) 
+                    ) +
+  geom_raster() +
+  stat_contour(aes(z = tvalue), 
+               colour = "black",
+               binwidth = 0.5) +
+  theme_topo()+
+  scale_fill_gradientn(colours = jet.colors(10),
+                       limits = c(-2,2),
+                       guide = "colourbar",
+                       oob = squish) + 
+  geom_path(data = maskRing,
+            aes(x, y, z = NULL, fill =NULL),
+            colour = "white",
+            size = 6) +
+  geom_path(data = headShape,
+            aes(x, y, z = NULL, fill = NULL),
+            size = 1.5)+
+  geom_path(data = nose,
+            aes(x, y, z = NULL, fill = NULL),
+            size = 1.5)+
+  geom_point(data = singleTimepoint,
+             aes(x, y),
+             size = 1.5)+
+  geom_point(data = sig.channels,
+             aes(x, y),
+             size = 2.5,
+             color = "white",
+             shape = 4,
+             stroke = 1.5)+
+  coord_equal()+
+  #ggtitle("LPC window")+
+  labs(fill = expression(paste(italic("t"), "-value")))+
+  theme(text=element_text(size=28, family="Avenir"),
+        panel.background = element_rect(fill = "white", color = "white"), # Set panel background to white
+        plot.background = element_rect(fill = "white", color = "white"), # Set plot background to white
+        legend.title.position = "top",
+        legend.title = element_text(hjust = 0.5),
+        legend.margin = margin(0,0,0,0),
+        legend.box.margin=margin(-30,0,0,0),
+        legend.position = "bottom",
+        plot.caption = element_text(size = 14))
+
+akimaLPC
+
+```
+
+### Save MQ ERP figures
+
+```{r warning = FALSE, message = FALSE}
+
+# read in topoplot guide
+img <- readPNG("/Users/natalia/Desktop/orbit-EEG/figures/topoplotguides.png")
+
+# upper figure
+MQ_ERPfigure <- ggarrange(erp, nrow = 1, labels = c("A"), font.label = list(color = "black", size = 26, family = "Arial", face = "bold"))
+MQ_ERPfigure
+
+# lower figures
+LPCfigures <- ggarrange(meanerp, akimaLPC, nrow =1, ncol = 3, widths = c(2.5, 3, 0.7), labels = c("B", "C", ""), font.label = list(color = "black", size = 26, family = "Arial", face = "bold"))
+LPCfigures <- LPCfigures + annotation_custom(rasterGrob(img), xmin = 0.75, xmax = 1.05, ymin = 0.75, ymax = 1)
+LPCfigures
+
+# combine all
+all.figures <- ggarrange(MQ_ERPfigure, LPCfigures, nrow = 2)
+all.figures
+
+# save figure to output directory
+ggsave("Figure3.tiff", path = figureDir, height = 12, width = 10)
+ggsave("Figure3.png", path = figureDir, height = 12, width = 10)
+
+```
+

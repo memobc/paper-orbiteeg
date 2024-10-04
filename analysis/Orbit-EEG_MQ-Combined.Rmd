@@ -1,0 +1,172 @@
+---
+title: "Orbit-EEG ERP - TF Correspondence"
+output:
+  html_document:
+    code_folding: hide
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+This markdown uses EEG data for both ERPs and TF clusters to determine the degree of overlap that these two measures capture in memory quality.
+
+```{r, include = FALSE}
+
+### load in all necessary packages
+x <- c("ggplot2", "shiny", "ggpubr", "dplyr", "knitr", "tidyr", "tidyverse", "magrittr", "grid", "gridExtra", "pander", "ez", "car", "smoothmath", "ggsignif", "formattable", "psych", "reshape2", "afex", "akima", "lsr", "readr", "scales", "mgcv", "png", "rstatix")
+require(x)
+lapply(x, require, character.only = TRUE)
+
+### define computer paths
+myComp <- '/Users/natalia/Desktop/orbit-EEG/'
+figureDir <- paste(myComp, 'figures', sep = "") 
+
+### define all functions
+ci <- function(x) (sqrt(var(x)/length(x)))*1.96  #function to calculate 95% confidence interval
+se <- function(x) sqrt(var(x)/length(x))  #function to calculate SE
+jet.colors <- colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000")) #for topoplots
+
+### load in all memory quality TF data
+myFile <- paste(myComp,'data/AllData_EEG-MQ_TF.csv', sep = "")
+TF_Data <- read.csv(myFile)
+
+### add frequency bins (theta: 5-7 hz, alpha: 8-12 hz, beta: 13-30 hz)
+TF_Data$freqbin[c(TF_Data$freq > 4 & TF_Data$freq < 8)] <- 'theta'
+TF_Data$freqbin[c(TF_Data$freq >= 8 & TF_Data$freq <= 12)] <- 'alpha'
+TF_Data$freqbin[c(TF_Data$freq > 12 & TF_Data$freq <= 30)] <- 'beta'
+
+### factor columns
+TF_Data <- TF_Data %>% 
+  mutate_if(is.character,as.factor)
+
+### load in all memory quality ERP data
+myFile <- paste(myComp,'data/AllData_EEG-MQ_ERP.csv', sep = "")
+ERP_Data <- read.csv(myFile)
+
+```
+
+
+# Match data across ERP and TF
+```{r, warning=FALSE,message=FALSE}
+
+# assign clusters determined in TF MQ analysis
+TF_Data <- within(TF_Data, {
+  MQclusters = ifelse(time >= 799 & time <= 918 & freq >= 15.74 & freq <= 30, "cluster1", ifelse(time >= 1125 & time <= 2277 & freq >= 9.53 & freq <= 30, "cluster2", ifelse(time >= 2840 & time <= 3105 & freq >= 5.27 & freq <= 16.91, "cluster3", "NONE")))
+})
+
+TF_Data$MQclusters <- as.factor(as.character(TF_Data$MQclusters))
+
+# summarize TF data
+mean.TF_Data <- TF_Data %>% 
+  filter(MQclusters != "NONE") %>% 
+  group_by(channel, MQclusters) %>% 
+  summarize(mean.tf.beta = mean(mean.beta))
+
+# reorganize TF data for merging
+mean.TF_Data <- spread(mean.TF_Data, MQclusters, mean.tf.beta)
+
+# summarize ERP data 
+mean.ERP_Data <- ERP_Data %>%
+  filter(time >= 500 & time <= 800) %>% 
+  group_by(channel) %>%
+  summarise(mean.erp.beta = mean(beta))
+
+# merge ERP and TF data by channel
+combinedData <- merge(mean.TF_Data, mean.ERP_Data, by = c("channel"))
+
+# identify posterior ROI channels from LPC window analysis
+combinedData <- within(combinedData, {
+  ROI = ifelse(channel %in% c("CP5", "CP3", "CPz", "CP4", "CP6", "P3", "Pz", "P4", "CP1", "CP2", "P1", "P2"), "ROI", "Outer")
+})
+
+combinedData$ROI <- as.factor(as.character(combinedData$ROI))
+
+```
+
+# Model and visualize relationship
+
+```{r, message=FALSE,warning=FALSE}
+
+# run simply linear model determining if MQ TF cluster effects predict MQ ERP effects
+mdl1 <- lm(mean.erp.beta ~ cluster1 + cluster2 + cluster3, data = combinedData)
+summary(mdl1)
+
+# plot relationship between ERP and TF data
+cl1 <- ggplot(combinedData, aes(y=mean.erp.beta, x=cluster1)) + 
+  geom_point(aes(shape = ROI, color = ROI), size = 2) + 
+  geom_smooth(method="lm", col="gray60", fill= "gray60") +
+  scale_color_manual(values=c("gray72", "#56B4E9")) +
+  scale_x_continuous(name = "Average cluster effect", limits = c(-18,-2), expand = c(0,0), breaks = seq(-18,-2,2)) + 
+  scale_y_continuous(name = "Average LPC effect", limits = c(0, 0.8), expand = c(0,0), breaks = seq(0,0.8,0.2))+
+  ggtitle("Cluster 1") + 
+  theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title.x = element_text(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.25,0.5), "cm"))
+
+
+print(cl1)
+
+cl2 <- ggplot(combinedData, aes(y=mean.erp.beta, x=cluster2)) + 
+  geom_point(aes(shape = ROI, color = ROI), size = 2) + 
+  geom_smooth(method="lm", col="gray60", fill= "gray60") +
+  scale_color_manual(values=c("gray72", "#56B4E9")) +
+  scale_x_continuous(name = "Average cluster effect", limits = c(-35,-5), expand = c(0,0), breaks = seq(-35,-5,5)) + 
+  scale_y_continuous(name = "Average LPC effect", limits = c(0, 0.8), expand = c(0,0), breaks = seq(0,0.8,0.2))+
+  ggtitle("Cluster 2") + 
+  theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title.x = element_text(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.25,0.5), "cm"))
+
+
+print(cl2)
+
+cl3 <- ggplot(combinedData, aes(y=mean.erp.beta, x=cluster3)) + 
+  geom_point(aes(shape = ROI, color = ROI), size = 2) + 
+  geom_smooth(method="lm", col="#C77CFF", fill= "#C77CFF") +
+  scale_color_manual(values=c("gray72", "#56B4E9")) +
+  scale_x_continuous(name = "Average cluster effect", limits = c(-60,20), expand = c(0,0), breaks = seq(-60,20,20)) + 
+  scale_y_continuous(name = "Average LPC effect", limits = c(0, 0.8), expand = c(0,0), breaks = seq(0,0.8,0.2))+
+  ggtitle("Cluster 3") + 
+  theme(plot.title = element_text(hjust = 0.5, size=22), 
+          axis.line = element_line(colour = "black"), 
+          axis.text = element_text(size = 16), 
+          axis.title.x = element_text(), 
+          axis.title.y = element_text(margin = margin(r = 10)),
+          panel.background = element_blank(),
+          legend.position="none", 
+          text = element_text(family="Avenir", size = 20),
+          plot.margin = unit(c(0.5,0.5,0.25,0.5), "cm"))
+
+
+print(cl3)
+
+
+```
+
+
+### Save figures
+```{r warning = FALSE, message = FALSE}
+
+all.figures <- ggarrange(cl1, cl2, cl3, nrow = 1, ncol = 3, labels = c("A", "B", "C"), widths = c(1,1,1), font.label = list(color = "black", size = 26, family = "Arial", face = "bold"))
+all.figures
+
+
+# save figure to output directory
+ggsave("Figure7.tiff", path = figureDir, width = 13, height = 6)
+ggsave("Figure7.png", path = figureDir, width = 13, height = 6)
+
+```
